@@ -27,6 +27,7 @@ import io.legado.app.R
 import io.legado.app.base.VMBaseActivity
 import io.legado.app.constant.BookType
 import io.legado.app.constant.EventBus
+import io.legado.app.constant.IntentAction
 import io.legado.app.constant.Theme
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.BaseSource
@@ -39,6 +40,7 @@ import io.legado.app.help.AppWebDav
 import io.legado.app.help.GlideImageGetter
 import io.legado.app.help.TextViewTagHandler
 import io.legado.app.help.WebCacheManager
+import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isAudio
@@ -65,6 +67,7 @@ import io.legado.app.lib.theme.bottomBackground
 import io.legado.app.lib.theme.getPrimaryTextColor
 import io.legado.app.model.BookCover
 import io.legado.app.model.remote.RemoteBookWebDav
+import io.legado.app.service.ExportBookService
 import io.legado.app.ui.about.AppLogDialog
 import io.legado.app.ui.book.audio.AudioPlayActivity
 import io.legado.app.ui.book.changecover.ChangeCoverDialog
@@ -85,6 +88,7 @@ import io.legado.app.ui.video.VideoPlayerActivity
 import io.legado.app.ui.widget.dialog.PhotoDialog
 import io.legado.app.ui.widget.dialog.VariableDialog
 import io.legado.app.ui.widget.dialog.WaitDialog
+import io.legado.app.utils.ACache
 import io.legado.app.utils.ColorUtils
 import io.legado.app.utils.ConvertUtils
 import io.legado.app.utils.FileDoc
@@ -93,6 +97,7 @@ import io.legado.app.utils.StartActivityContract
 import io.legado.app.utils.applyNavigationBarPadding
 import io.legado.app.utils.dpToPx
 import io.legado.app.utils.gone
+import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.longSnackbar
 import io.legado.app.utils.longToastOnUi
 import io.legado.app.utils.observeEvent
@@ -103,6 +108,7 @@ import io.legado.app.utils.setHtml
 import io.legado.app.utils.setMarkdown
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivity
+import io.legado.app.utils.startService
 import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.viewbindingdelegate.viewBinding
 import io.legado.app.utils.visible
@@ -187,6 +193,31 @@ class BookInfoActivity :
             viewModel.refreshBook(book)
         }
     }
+    private val exportBookPathKey = "exportBookPath"
+    private val exportDir = registerForActivityResult(HandleFileContract()) { result ->
+        var dirPath = ""
+        result.uri?.let { uri ->
+            if (uri.isContentScheme()) {
+                ACache.get().put(exportBookPathKey, uri.toString())
+                dirPath = uri.toString()
+            } else {
+                uri.path?.let { path ->
+                    ACache.get().put(exportBookPathKey, path)
+                    dirPath = path
+                }
+            }
+        }
+        if (dirPath.isNotEmpty()) {
+            pendingExportBook?.let { book ->
+                val cacheFirst = pendingExportCacheFirst
+                pendingExportBook = null
+                pendingExportCacheFirst = false
+                startExportService(book, dirPath, cacheFirst)
+            }
+        }
+    }
+    private var pendingExportBook: Book? = null
+    private var pendingExportCacheFirst = false
     private var chapterChanged = false
     private val waitDialog by lazy { WaitDialog(this) }
     private var editMenuItem: MenuItem? = null
@@ -276,6 +307,8 @@ class BookInfoActivity :
             viewModel.bookData.value?.isLocalTxt ?: false
         menu.findItem(R.id.menu_upload)?.isVisible =
             viewModel.bookData.value?.isLocal ?: false
+        menu.findItem(R.id.menu_export_txt)?.isVisible =
+            viewModel.bookData.value?.let { !it.isAudio && !it.isVideo && !it.isImage } ?: false
         menu.findItem(R.id.menu_delete_alert)?.isChecked =
             LocalConfig.bookInfoDeleteAlert
         return super.onMenuOpened(featureId, menu)
@@ -395,6 +428,7 @@ class BookInfoActivity :
                 if (!item.isChecked) longToastOnUi(R.string.need_more_time_load_content)
             }
 
+            R.id.menu_export_txt -> exportTxt()
             R.id.menu_delete_alert -> LocalConfig.bookInfoDeleteAlert = !item.isChecked
             R.id.menu_upload -> {
                 viewModel.getBook()?.let { book ->
@@ -456,6 +490,51 @@ class BookInfoActivity :
         upLoading(true)
         viewModel.getBook()?.let {
             viewModel.loadChapter(it, true, isFromBookInfo = true)
+        }
+    }
+
+    private fun exportTxt() {
+        val book = viewModel.getBook() ?: return
+        lifecycleScope.launch {
+            val fullyCached = withContext(IO) {
+                book.isLocal || appDb.bookChapterDao.getChapterList(book.bookUrl)
+                    .all { BookHelp.hasContent(book, it) }
+            }
+            if (fullyCached) {
+                startExportTxt(book, cacheFirst = false)
+            } else {
+                alert(
+                    titleResource = R.string.export_uncached_title,
+                    messageResource = R.string.export_uncached_message
+                ) {
+                    positiveButton(R.string.cache_now) {
+                        startExportTxt(book, cacheFirst = true)
+                    }
+                    negativeButton(R.string.export_later) { }
+                }
+            }
+        }
+    }
+
+    private fun startExportTxt(book: Book, cacheFirst: Boolean) {
+        val path = ACache.get().getAsString(exportBookPathKey)
+        if (path.isNullOrEmpty()) {
+            pendingExportBook = book
+            pendingExportCacheFirst = cacheFirst
+            exportDir.launch {}
+        } else {
+            startExportService(book, path, cacheFirst)
+        }
+    }
+
+    private fun startExportService(book: Book, path: String, cacheFirst: Boolean) {
+        startService<ExportBookService> {
+            action = IntentAction.start
+            putExtra("bookUrl", book.bookUrl)
+            putExtra("exportType", "txt")
+            putExtra("exportPath", path)
+            putExtra("useReplace", true)
+            putExtra("cacheFirst", cacheFirst)
         }
     }
 

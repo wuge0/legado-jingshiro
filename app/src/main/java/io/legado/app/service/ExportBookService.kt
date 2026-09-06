@@ -21,9 +21,11 @@ import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.getExportFileName
+import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalModified
 import io.legado.app.help.config.AppConfig
 import io.legado.app.model.ReadBook
+import io.legado.app.model.webBook.WebBook
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.ui.book.cache.CacheActivity
 import io.legado.app.utils.FileDoc
@@ -44,6 +46,7 @@ import io.legado.app.utils.postEvent
 import io.legado.app.utils.servicePendingIntent
 import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.writeFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -85,7 +88,9 @@ class ExportBookService : BaseService() {
         val path: String,
         val type: String,
         val epubSize: Int = 1,
-        val epubScope: String? = null
+        val epubScope: String? = null,
+        val useReplace: Boolean = false,
+        val cacheFirst: Boolean = false
     )
 
     private val groupKey = "${appCtx.packageName}.exportBook"
@@ -103,7 +108,9 @@ class ExportBookService : BaseService() {
                         path = intent.getStringExtra("exportPath")!!,
                         type = intent.getStringExtra("exportType")!!,
                         epubSize = intent.getIntExtra("epubSize", 1),
-                        epubScope = intent.getStringExtra("epubScope")
+                        epubScope = intent.getStringExtra("epubScope"),
+                        useReplace = intent.getBooleanExtra("useReplace", false),
+                        cacheFirst = intent.getBooleanExtra("cacheFirst", false)
                     )
                     waitExportBooks[bookUrl] = exportConfig
                     exportMsg[bookUrl] = getString(R.string.export_wait)
@@ -197,7 +204,12 @@ class ExportBookService : BaseService() {
                             ).export(exportConfig.path, book)
                         }
                     } else {
-                        exportTxt(exportConfig.path, book)
+                        exportTxt(
+                            exportConfig.path,
+                            book,
+                            exportConfig.useReplace,
+                            exportConfig.cacheFirst
+                        )
                     }
                     exportMsg[book.bookUrl] = getString(R.string.export_success)
                 } catch (e: Throwable) {
@@ -232,21 +244,34 @@ class ExportBookService : BaseService() {
         val src: String
     )
 
-    private suspend fun exportTxt(path: String, book: Book) {
+    private suspend fun exportTxt(
+        path: String,
+        book: Book,
+        forceUseReplace: Boolean,
+        cacheFirst: Boolean
+    ) {
         exportMsg.remove(book.bookUrl)
         postEvent(EventBus.EXPORT_BOOK, book.bookUrl)
         val fileDoc = FileDoc.fromDir(path)
-        exportTxt(fileDoc, book)
+        exportTxt(fileDoc, book, forceUseReplace, cacheFirst)
     }
 
-    private suspend fun exportTxt(fileDoc: FileDoc, book: Book) {
+    private suspend fun exportTxt(
+        fileDoc: FileDoc,
+        book: Book,
+        forceUseReplace: Boolean,
+        cacheFirst: Boolean
+    ) {
+        if (cacheFirst) {
+            cacheMissingChapters(book)
+        }
         val filename = book.getExportFileName("txt")
         fileDoc.find(filename)?.delete()
 
         val bookDoc = fileDoc.createFileIfNotExist(filename)
         val charset = Charset.forName(AppConfig.exportCharset)
         bookDoc.openOutputStream().getOrThrow().bufferedWriter(charset).use { bw ->
-            getAllContents(book) { text, srcList ->
+            getAllContents(book, forceUseReplace) { text, srcList ->
                 bw.write(text)
                 srcList?.forEach {
                     val vFile = BookHelp.getImage(book, it.src)
@@ -269,11 +294,39 @@ class ExportBookService : BaseService() {
         }
     }
 
+    /**
+     * 导出前缓存缺失章节，限制并发以避免一次性拉取过多导致封号。
+     * 并发控制在 3 章以内。
+     */
+    private suspend fun cacheMissingChapters(book: Book) {
+        if (book.isLocal) return
+        val bookSource = appDb.bookSourceDao.getBookSource(book.origin) ?: return
+        val missingChapters = appDb.bookChapterDao.getChapterList(book.bookUrl)
+            .filter { !BookHelp.hasContent(book, it) }
+        if (missingChapters.isEmpty()) return
+        notificationContentText = "正在缓存未下载章节...(${missingChapters.size}章)"
+        upExportNotification()
+        try {
+            flow {
+                missingChapters.forEach { emit(it) }
+            }.mapAsync(3) { chapter ->
+                runCatching {
+                    WebBook.getContentAwait(bookSource, book, chapter)
+                }
+            }.collect { }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.put("缓存未下载章节失败\n${e.localizedMessage}", e)
+        }
+    }
+
     private suspend fun getAllContents(
         book: Book,
+        forceUseReplace: Boolean,
         append: (text: String, srcList: ArrayList<SrcData>?) -> Unit
     ) = coroutineScope {
-        val useReplace = AppConfig.exportUseReplace && book.getUseReplaceRule()
+        val useReplace = (if (forceUseReplace) true else AppConfig.exportUseReplace) && book.getUseReplaceRule()
         val contentProcessor = ContentProcessor.get(book.name, book.origin)
         val qy = "${book.name}\n${
             getString(R.string.author_show, book.getRealAuthor())
@@ -319,7 +372,8 @@ class ExportBookService : BaseService() {
                 includeTitle = !AppConfig.exportNoChapterName,
                 useReplace = useReplace,
                 chineseConvert = false,
-                reSegment = false
+                reSegment = false,
+                useHighlight = false
             ).toString()
         if (AppConfig.exportPictureFile) {
             //txt导出图片文件

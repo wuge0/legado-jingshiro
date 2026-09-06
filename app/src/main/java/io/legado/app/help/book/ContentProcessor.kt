@@ -194,7 +194,8 @@ class ContentProcessor private constructor(
         includeTitle: Boolean = true,
         useReplace: Boolean = true,
         chineseConvert: Boolean = true,
-        reSegment: Boolean = true
+        reSegment: Boolean = true,
+        useHighlight: Boolean = true
     ): BookContent {
         var mContent = content
         var sameTitleRemoved = false
@@ -265,7 +266,7 @@ class ContentProcessor private constructor(
                         placeholder
                     }
                 }
-                getContentReplaceRules().forEach { item ->
+                getContentReplaceRules().filter { useHighlight || !it.isHighlight }.forEach { item ->
                     if (item.pattern.isEmpty()) {
                         return@forEach
                     }
@@ -346,11 +347,20 @@ class ContentProcessor private constructor(
         }
         if (includeTitle) {
             //重新添加标题
-            val displayTitle = getDisplayTitleWithHighlight(
-                chapter,
-                useReplace && book.getUseReplaceRule(),
-                replaceBook
-            )
+            val useReplaceTitle = useReplace && book.getUseReplaceRule()
+            val displayTitle = if (useHighlight) {
+                getDisplayTitleWithHighlight(
+                    chapter,
+                    useReplaceTitle,
+                    replaceBook
+                )
+            } else {
+                chapter.getDisplayTitle(
+                    titleReplaceRules,
+                    useReplace = useReplaceTitle,
+                    replaceBook = replaceBook
+                )
+            }
             mContent = displayTitle + "\n" + mContent
         }
         if (isAndroid8) {

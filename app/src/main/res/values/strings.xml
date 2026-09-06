@@ -1219,6 +1219,11 @@
     <string name="export_book">Export Book</string>
     <string name="export_book_notification_content">Exporting (%1$s), with %2$d to be exported.</string>
     <string name="export_md">Export(MD)</string>
+    <string name="export_txt">Export TXT</string>
+    <string name="export_uncached_title">Some chapters not cached</string>
+    <string name="export_uncached_message">This book is not fully cached. Cache the missing chapters before exporting? Concurrent caching is limited to 3 chapters to reduce the risk of account bans.</string>
+    <string name="cache_now">Cache now</string>
+    <string name="export_later">Later</string>
     <string name="export_to_obsidian">Export to Obsidian</string>
     <string name="export_book_to_obsidian">Export 《%1$s》 to Obsidian</string>
     <string name="export_method">Export method</string>

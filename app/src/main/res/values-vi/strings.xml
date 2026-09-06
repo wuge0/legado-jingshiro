@@ -1139,6 +1139,11 @@
     <string name="export_book">Xuất sách</string>
     <string name="export_book_notification_content">Đang xuất (%1$s), còn %2$d cuốn cần xuất.</string>
     <string name="export_md">Xuất (MD)</string>
+    <string name="export_txt">Xuất TXT</string>
+    <string name="export_uncached_title">Một số chương chưa được lưu</string>
+    <string name="export_uncached_message">Cuốn sách này chưa được lưu đầy đủ. Lưu các chương còn thiếu trước khi xuất? Đồng thời lưu tối đa 3 chương để giảm rủi ro bị khóa tài khoản.</string>
+    <string name="cache_now">Lưu ngay</string>
+    <string name="export_later">Để sau</string>
     <string name="change_source_delay">Độ trễ đổi nguồn</string>
     <string name="change_source_progress">Kết quả %1$d, Tiến độ %2$d / %3$d: %4$s</string>
     <string name="open_book_info_by_click_title">Nhấn vào tên sách để mở chi tiết</string>

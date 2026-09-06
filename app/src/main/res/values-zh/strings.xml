@@ -1196,6 +1196,11 @@
     <string name="export_book">导出书籍</string>
     <string name="export_book_notification_content">正在导出(%1$s),还有%2$d本待导出</string>
     <string name="export_md">导出(MD)</string>
+    <string name="export_txt">导出TXT</string>
+    <string name="export_uncached_title">部分章节未缓存</string>
+    <string name="export_uncached_message">本书尚未全文缓存，是否先缓存缺失章节再导出？缓存并发限制为 3 章，以降低封号风险。</string>
+    <string name="cache_now">现在缓存</string>
+    <string name="export_later">稍后再看</string>
     <string name="export_to_obsidian">导出到Obsidian</string>
     <string name="export_method">导出方式</string>
     <string name="obsidian_rest_api">Local REST API</string>
